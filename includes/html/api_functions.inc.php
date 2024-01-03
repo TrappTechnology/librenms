@@ -391,8 +391,67 @@ function list_devices(Illuminate\Http\Request $request)
         if (is_numeric($host_id)) {
             $device['parent_id'] = $host_id;
         }
+
+        //  Convert $device from an array to an object so we can call Device::isUnderMaintenance.
+
+        $object = new Device();
+        foreach ($device as $key => $value)
+        {
+            $object->$key = $value;
+        }
+
+        $device['under_maint'] = $object->isUnderMaintenance();
+
+        // Now check if this device is part of a device group that is under maint
+
+        $dev=$device['device_id'];
+
+        // Find the device_group in device_group_device table
+
+        $dgd_query = "SELECT * FROM `device_group_device` WHERE `device_id` = $dev";
+        $dgd_result = dbFetchRows($dgd_query);
+
+        if ($dgd_result) {
+            //echo ('dgd_result'."\n");
+
+            $dgd_id = $dgd_result[0]['device_group_id'];
+
+            // Find the group name in the device_groups table
+
+            $dg_query = "SELECT * FROM `device_groups` WHERE `id` = $dgd_id";
+            $dg_result = dbFetchRows($dg_query);
+
+            if ($dg_result) {
+                //echo ('dg_result'."\n");
+
+                $dg_name = $dg_result[0]['name'];
+
+                // Set the time zone for now to match the database
+
+                $tz_query = "SET time_zone = '+0:01'";
+                $tz_result = dbFetchRows($tz_query);
+
+                // See if we are in maintenance mode for this device group within the date range
+
+                $alert_query = "SELECT * FROM `alert_schedule` WHERE `title` = '$dg_name' AND `start` <= now() AND `end` >= now()";
+                $alert_result = dbFetchRows($alert_query);
+
+                if ($alert_result) {
+                    //echo ('alert_result'."\n");
+
+                    $device['under_maint'] = true;
+                }
+            }
+        }
+
+        $device['authname'] = null;
+        $device['authpass'] = null;
+        $device['cryptopass'] = null;
+
         $devices[] = $device;
     }
+
+    //echo ('END OF LOOP'."\n");
 
     return api_success($devices, 'devices');
 }
@@ -445,10 +504,23 @@ function add_device(Illuminate\Http\Request $request)
             $device->snmp_disable = 1;
         }
 
-        (new ValidateDeviceAndCreate($device, ! empty($data['force_add']), ! empty($data['ping_fallback'])))->execute();
+        $device->authname = $data['authname'] ?? '';
+        $device->authpass = $data['authpass'] ?? '';
+        $device->cryptopass = $data['cryptopass'] ?? '';
+        $device->cryptoalgo = $data['cryptoalgo'] ?? '';
+        $device->authalgo = $data['authalgo'] ?? '';
+        $device->transport = $data['transport'] ?? '';
+        $device->port = $data['port'] ?? '';
+
+        (new ValidateDeviceAndCreate($device, ! empty($data['force_add'])))->execute();
     } catch (Exception $e) {
         return api_error(500, $e->getMessage());
     }
+
+
+    $device->authname = null;
+    $device->authpass = null;
+    $device->cryptopass = null;
 
     $message = "Device $device->hostname ($device->device_id) has been added successfully";
 
@@ -482,6 +554,10 @@ function del_device(Illuminate\Http\Request $request)
         return api_error(500, 'Device deletion failed');
     }
 
+    $device['authname'] = null;
+    $device['authpass'] = null;
+    $device['cryptopass'] = null;
+
     // deletion succeeded - include old device details in response
     return api_success([$device], 'devices', $response);
 }
@@ -511,6 +587,8 @@ function maintenance_device(Illuminate\Http\Request $request)
         'title' => $title,
         'notes' => $notes,
         'recurring' => 0,
+        'schedule_id' => 0,
+        'start' => date('Y-m-d H:i:s'),
     ]);
 
     $start = $request->json('start') ?? \Carbon\Carbon::now()->format('Y-m-d H:i:00');
@@ -525,8 +603,14 @@ function maintenance_device(Illuminate\Http\Request $request)
             ->format('Y-m-d H:i:00');
     }
 
-    $alert_schedule->save();
-    $alert_schedule->devices()->attach($device);
+
+    $device->alertSchedules()->save($alert_schedule);
+
+    $result = dbUpdate(['schedule_id' => $alert_schedule->schedule_id,'alert_schedulable_id' => $device->device_id], 'alert_schedulables', '`schedule_id` = ? AND `alert_schedulable_id` = ?', [$device->device_id, 0]);
+
+    if (empty($result)) {
+        return api_error(404, "Device $hostname maintenance mode failed");
+    }
 
     if ($notes && UserPref::getPref(Auth::user(), 'add_schedule_note_to_device')) {
         $device->notes .= (empty($device->notes) ? '' : PHP_EOL) . date('Y-m-d H:i') . ' Alerts delayed: ' . $notes;
@@ -804,7 +888,21 @@ function list_ospf_ports(Illuminate\Http\Request $request)
 
 function get_graph_by_portgroup(Request $request)
 {
+    $group = $request->route('group');
     $id = $request->route('id');
+    $vars = [
+        'output' => $request->get('output', 'display'),
+        'width'  => $request->get('width', 1075),
+        'height' => $request->get('height', 300),
+        'type'   => 'multiport_bits_separate',
+    ];
+    if ($request->has('from')) {
+        $vars['from'] = $request->get('from');
+    }
+
+    if ($request->has('to')) {
+        $vars['to'] = $request->get('to');
+    }
 
     if (empty($id)) {
         $group = $request->route('group');
@@ -813,6 +911,7 @@ function get_graph_by_portgroup(Request $request)
     } else {
         $if_list = $id;
     }
+    $vars['id'] = $if_list;
 
     return api_get_graph($request, [
         'type'   => 'multiport_bits_separate',
@@ -1145,7 +1244,10 @@ function search_ports(Illuminate\Http\Request $request): JsonResponse
  */
 function get_all_ports(Illuminate\Http\Request $request): JsonResponse
 {
-    $columns = validate_column_list($request->get('columns'), 'ports', ['port_id', 'ifName']);
+    $columns = $request->get('columns', 'port_id, ifName');
+    if ($validate = validate_column_list($columns, 'ports') !== true) {
+        return $validate;
+    }
 
     $ports = Port::hasAccess(Auth::user())
         ->select($columns)
@@ -3043,10 +3145,87 @@ function edit_service_for_host(Illuminate\Http\Request $request)
     return api_error(500, "Failed to update the service with id $service_id");
 }
 
-/**
- * recieve syslog messages via json https://github.com/librenms/librenms/pull/14424
- */
-function post_syslogsink(Illuminate\Http\Request $request)
+function list_pollers(Illuminate\Http\Request $request)
+{
+    $id = $request->route('id');
+    $sql = '';
+    $param = [];
+    if ($id > 0) {
+        $sql = 'WHERE id=?';
+        $param = [$id];
+    }
+    $pollers = [];
+    $poller_query = "SELECT * FROM `pollers` $sql";
+    foreach (dbFetchRows($poller_query, $param) as $poller) {
+        /* $host_id = get_vm_parent_id($device);
+         $device['ip'] = inet6_ntop($device['ip']);
+         $device['authpass'] = null;
+         $device['authname'] = null;
+         $device['cryptopass'] = null;
+         if (is_numeric($host_id)) {
+             $device['parent_id'] = $host_id;
+         } */
+        $pollers[] = $poller;
+    }
+    return api_success($pollers, 'pollers');
+}
+
+function list_poller_groups(Illuminate\Http\Request $request)
+{
+    $id = $request->route('id');
+    $sql = '';
+    $param = [];
+    if ($id > 0) {
+        $sql = 'WHERE id=?';
+        $param = [$id];
+    }
+    $poller_groups = [];
+    $poller_groups_query = "SELECT * FROM `poller_groups` $sql";
+    foreach (dbFetchRows($poller_groups_query, $param) as $poller_group) {
+        /* $host_id = get_vm_parent_id($device);
+         $device['ip'] = inet6_ntop($device['ip']);
+         $device['authpass'] = null;
+         $device['authname'] = null;
+         $device['cryptopass'] = null;
+         if (is_numeric($host_id)) {
+             $device['parent_id'] = $host_id;
+         } */
+        $poller_groups[] = $poller_group;
+    }
+    return api_success($poller_groups, 'poller_groups');
+}
+
+function disable_port(Illuminate\Http\Request $request)
+{
+    $data = json_decode($request->getContent(), false);
+
+    if (empty($data)) {
+        return api_error(400, 'No information has been provided to add this new device');
+    }
+
+    $hostname = $request->route('hostname');
+    // use hostname as device_id if it's all digits
+    $device_id = ctype_digit($hostname) ? $hostname : getidbyname($hostname);
+
+    $status = array();
+
+    foreach ($data as $port_id) {
+        $result = dbUpdate(['disabled' => 1], 'ports', '`device_id` = ? AND `port_id` = ?', [$device_id, $port_id]);
+
+        $port_status = array();
+        $port_status["port_id"]=$port_id;
+
+        if (empty($result))
+            $port_status["status"] = 0;
+        else
+            $port_status["status"] = 1;
+
+        $status[] = $port_status;
+    }
+    return api_success($status,"status");
+}
+
+function enable_port(Illuminate\Http\Request $request)
 {
     $json = $request->json()->all();
 
@@ -3054,10 +3233,24 @@ function post_syslogsink(Illuminate\Http\Request $request)
         return api_success_noresult(400, 'Not valid json');
     }
 
-    $logs = array_is_list($json) ? $json : [$json];
+    $hostname = $request->route('hostname');
+    // use hostname as device_id if it's all digits
+    $device_id = ctype_digit($hostname) ? $hostname : getidbyname($hostname);
 
-    foreach ($logs as $entry) {
-        process_syslog($entry, 1);
+    $status = array();
+
+    foreach ($data as $port_id) {
+        $result = dbUpdate(['disabled' => 0], 'ports', '`device_id` = ? AND `port_id` = ?', [$device_id, $port_id]);
+
+        $port_status = array();
+        $port_status["port_id"]=$port_id;
+
+        if (empty($result))
+            $port_status["status"] = 0;
+        else
+            $port_status["status"] = 1;
+
+        $status[] = $port_status;
     }
 
     return api_success_noresult(200, 'Syslog received: ' . count($logs));
@@ -3068,20 +3261,7 @@ function post_syslogsink(Illuminate\Http\Request $request)
  */
 function server_info()
 {
-    $version = \LibreNMS\Util\Version::get();
-
-    $versions = [
-        'local_ver' => $version->name(),
-        'local_sha' => $version->git->commitHash(),
-        'local_date' => $version->date(),
-        'local_branch' => $version->git->branch(),
-        'db_schema' => $version->database(),
-        'php_ver' => phpversion(),
-        'python_ver' => $version->python(),
-        'database_ver' => $version->databaseServer(),
-        'rrdtool_ver' => $version->rrdtool(),
-        'netsnmp_ver' => $version->netSnmp(),
-    ];
+    $versions = version_info();
 
     return api_success([
         $versions,

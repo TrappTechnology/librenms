@@ -131,9 +131,11 @@ Route::prefix('v0')->namespace('\App\Api\Controllers')->group(function () {
     Route::prefix('ports')->group(function () {
         Route::get('{portid}', 'LegacyApiController@get_port_info')->name('get_port_info');
         Route::get('{portid}/ip', 'LegacyApiController@get_port_ip_addresses')->name('get_port_ip_info');
-        Route::get('search/{field}/{search?}', 'LegacyApiController@search_ports')->name('search_ports')->where('search', '.*');
-        Route::get('mac/{search}', 'LegacyApiController@search_by_mac')->name('search_mac');
-        Route::get('', 'LegacyApiController@get_all_ports')->name('get_all_ports');
+        Route::get('search/{field}/{search?}', 'LegacyApiController@search_ports')->name('search_ports');
+        Route::get('mac/{search}', 'LegacyApiController@search_by_mac')->name('search   _mac');
+        Route::get(null, 'LegacyApiController@get_all_ports')->name('get_all_ports');
+        Route::post('{hostname}/disable', 'LegacyApiController@disable_port')->name('disable_port');
+        Route::post('{hostname}/enable', 'LegacyApiController@enable_port')->name('enable_port');
     });
 
     Route::prefix('bills')->group(function () {
@@ -164,6 +166,11 @@ Route::prefix('v0')->namespace('\App\Api\Controllers')->group(function () {
 
     Route::get('inventory/{hostname}', 'LegacyApiController@get_inventory')->name('get_inventory');
     Route::get('inventory/{hostname}/all', 'LegacyApiController@get_inventory_for_device')->name('get_inventory_for_device');
+
+    Route::prefix('pollers'->group(function () {
+        Route::get(null, 'LegacyApiController@list_pollers')->name('list_pollers');
+        Route::get('groups', 'LegacyApiController@list_poller_groups')->name('list_poller_groups');
+     });
 
     // Route not found
     Route::any('/{path?}', 'LegacyApiController@api_not_found')->where('path', '.*');

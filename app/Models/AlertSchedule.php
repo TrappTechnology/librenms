@@ -230,4 +230,11 @@ class AlertSchedule extends Model
             'Alert Schedule ')
             . "start: $this->start end: $this->end";
     }
+
+    // 20240103 mpeters Added changes for ArmorPoint merge
+
+    public function deviceGroupDevice(): MorphToMany
+    {
+        return $this->morphedByMany(\App\Models\DeviceGroupDevice::class, 'device_group_devs', 'device_group_device', 'device_group_id', 'device_id');
+    }
 }

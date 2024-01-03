@@ -1,4 +1,3 @@
-<?php
 
 namespace App\Models;
 
@@ -47,24 +46,17 @@ class Device extends BaseModel
         'community',
         'cryptoalgo',
         'cryptopass',
-        'disable_notify',
-        'disabled',
         'features',
         'hardware',
         'hostname',
         'display',
         'icon',
-        'ignore',
         'ip',
-        'location_id',
-        'notes',
         'os',
-        'override_sysLocation',
         'overwrite_ip',
         'poller_group',
         'port',
         'port_association_mode',
-        'purpose',
         'retries',
         'serial',
         'snmp_disable',
@@ -77,15 +69,13 @@ class Device extends BaseModel
         'sysObjectID',
         'timeout',
         'transport',
-        'version',
         'uptime',
-    ];
+        'under_maint',
+        'version',
+     ];
 
     protected $casts = [
-        'inserted' => 'datetime',
-        'last_discovered' => 'datetime',
         'last_polled' => 'datetime',
-        'last_ping' => 'datetime',
         'status' => 'boolean',
     ];
 
@@ -214,23 +204,24 @@ class Device extends BaseModel
             return false;
         }
 
-        $query = AlertSchedule::isActive()
+         $query = AlertSchedule::isActive()
             ->where(function (Builder $query) {
                 $query->whereHas('devices', function (Builder $query) {
-                    $query->where('alert_schedulables.alert_schedulable_id', $this->device_id);
+                     $query->where('alert_schedulables.alert_schedulable_id', $this->device_id);
                 });
 
                 if ($this->groups->isNotEmpty()) {
                     $query->orWhereHas('deviceGroups', function (Builder $query) {
                         $query->whereIntegerInRaw('alert_schedulables.alert_schedulable_id', $this->groups->pluck('id'));
-                    });
-                }
+                     });
+                   }
 
                 if ($this->location) {
                     $query->orWhereHas('locations', function (Builder $query) {
                         $query->where('alert_schedulables.alert_schedulable_id', $this->location->id);
-                    });
+                     });
                 }
+
             });
 
         return $query->exists();
@@ -299,9 +290,9 @@ class Device extends BaseModel
         return Permissions::canAccessDevice($this->device_id, $user->user_id);
     }
 
-    public function formatDownUptime($short = false): string
+    public function formatDownUptime($short = false)
     {
-        $time = ($this->status == 1) ? $this->uptime : $this->last_polled?->diffInSeconds();
+        $time = ($this->status == 1) ? $this->uptime : time() - strtotime($this->last_polled);
 
         return Time::formatInterval($time, $short);
     }
@@ -437,7 +428,7 @@ class Device extends BaseModel
                 return;
             }
 
-            if (! $this->relationLoaded('location') || $this->location?->location !== $new_location->location) {
+            if (! $this->relationLoaded('location') || optional($this->location)->location !== $new_location->location) {
                 if (! $new_location->exists) { // don't fetch if new location persisted to the DB, just use it
                     $new_location = Location::firstOrCreate(['location' => $new_location->location], $coord);
                 }
