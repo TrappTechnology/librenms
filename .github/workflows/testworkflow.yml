@@ -10,7 +10,7 @@ jobs:
     name: Linux NMS Test
     runs-on: [ self-hosted, linux ]
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
         with:
           repository: TrappTechnology/libreNMS
       - name: check branch
