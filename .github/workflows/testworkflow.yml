@@ -1,0 +1,49 @@
+name: LibreNMS
+
+on:
+  pull_request:
+    #    types: [ assigned, opened, synchronize, reopened ]
+    branches: [ dev, qa, master ]
+  workflow_dispatch:
+jobs:
+  libreNMSCurlTest:
+    name: Linux NMS Test
+    runs-on: [ self-hosted, linux ]
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          repository: TrappTechnology/libreNMS
+      - name: check branch
+        run: echo ${{ github.head_ref }}
+      - name: change dir relative to root of repo
+        run:  cd ./scripts
+      - name: Test list_devices for null authname
+        run: |
+          if [ $(curl -k -H 'X-Auth-Token: ${{ secrets.SECRETAPIKEY }}' https://100.115.0.2/api/v0/devices | grep '"authname": null' | wc -l) > 0 ]; then exit 0; else exit 1; fi
+      - name: Test list_devices for null authpass
+        run: |
+          if [ $(curl -k -H 'X-Auth-Token: ${{ secrets.SuperSecret }}' https://100.115.0.2/api/v0/devices | grep '"authpass": null' | wc -l) > 0 ]; then exit 0; else exit 1; fi
+      - name: Test list_devices for null cryptopass
+        run: |
+          if [ $(curl -k -H 'X-Auth-Token: ${{ secrets.SECRETAPIKEY }}' https://100.115.0.2/api/v0/devices | grep '"cryptopass": null' | wc -l) > 0 ]; then exit 0; else exit 1; fi
+      - name: Test list_devices after setting maintenance mode for 0 devices
+        run: |
+          if [ $(curl -k -H 'X-Auth-Token: ${{ secrets.SECRETAPIKEY }}' https://100.115.0.2/api/v0/devices | grep '"under_maint": true' | wc -l) = 0 ]; then exit 0; else exit 1; fi
+      - name: Set maintenance for 1 device
+        run: |
+          curl -k -X POST -d '{"notes":"Test maintenance for 1 device","duration":"0:02"}' -H 'X-Auth-Token: ${{ secrets.SECRETAPIKEY }}'  https://100.115.0.2/api/v0/devices/100.99.0.21/maintenance
+      - name: Test list_devices after setting maintenance mode for 1 device
+        run: |
+          if [ $(curl -k -H 'X-Auth-Token: ${{ secrets.SECRETAPIKEY }}' https://100.115.0.2/api/v0/devices | grep '"under_maint": true' | wc -l) = 1 ]; then exit 0; else exit 1; fi
+      - name: Set maintenance mode for device group "All"
+        run: |
+          curl -k -X POST -d '{"notes":"Test maintenence mode for group - All", "duration":"0:02"}' -H 'X-Auth-Token: ${{ secrets.SECRETAPIKEY }}' https://100.115.0.2/api/v0/devicegroups/All/maintenance
+      - name: Test list_devices after setting maintenance mode for device_group All
+        run: |
+          if [ $(curl -k -H 'X-Auth-Token: ${{ secrets.SECRETAPIKEY }}' https://100.115.0.2/api/v0/devices | grep '"under_maint": true' | wc -l) = 2 ]; then exit 0; else exit 1; fi
+      - name: List Pollers - should be 1 for dev
+        run: |
+          if [ $(curl -k -H 'X-Auth-Token: ${{ secrets.SECRETAPIKEY }}' https://100.115.0.2/api/v0/pollers | grep '"count": 1' | wc -l) = 1 ]; then exit 0; else exit 1; fi
+      - name: List Poller Groups - should be 0 for dev
+        run: |
+          if [ $(curl -k -H 'X-Auth-Token: ${{ secrets.SECRETAPIKEY }}' https://100.115.0.2/api/v0/pollers/groups | grep '"count": 0' | wc -l) = 1 ]; then exit 0; else exit 1; fi
