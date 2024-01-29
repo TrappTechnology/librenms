@@ -131,9 +131,11 @@ Route::prefix('v0')->namespace('\App\Api\Controllers')->group(function () {
     Route::prefix('ports')->group(function () {
         Route::get('{portid}', 'LegacyApiController@get_port_info')->name('get_port_info');
         Route::get('{portid}/ip', 'LegacyApiController@get_port_ip_addresses')->name('get_port_ip_info');
-        Route::get('search/{field}/{search?}', 'LegacyApiController@search_ports')->name('search_ports');
-        Route::get('mac/{search}', 'LegacyApiController@search_by_mac')->name('search   _mac');
-        Route::get(null, 'LegacyApiController@get_all_ports')->name('get_all_ports');
+        Route::get('search/{field}/{search?}', 'LegacyApiController@search_ports')->name('search_ports')->where('search', '.*');
+        Route::get('mac/{search}', 'LegacyApiController@search_by_mac')->name('search_mac');
+        Route::get('', 'LegacyApiController@get_all_ports')->name('get_all_ports');
+        Route::get('{portid}/description', 'LegacyApiController@get_port_description')->name('get_port_description');
+        Route::patch('{portid}/description', 'LegacyApiController@update_port_description')->name('update_port_description');
         Route::post('{hostname}/disable', 'LegacyApiController@disable_port')->name('disable_port');
         Route::post('{hostname}/enable', 'LegacyApiController@enable_port')->name('enable_port');
     });
